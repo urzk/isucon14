@@ -20,12 +20,14 @@ import type {
 } from "./types/models.js";
 import { setCookie } from "hono/cookie";
 import {
+  calculateDiscountedFareWithDiscount,
   calculateDistance,
   calculateFare,
   ErroredUpstream,
   FARE_PER_DISTANCE,
   getLatestRideStatus,
   INITIAL_FARE,
+  latestRideStatusSQL,
 } from "./common.js";
 import type { CountResult } from "./types/util.js";
 import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
@@ -162,32 +164,30 @@ export const appGetRides = async (ctx: Context<Environment>) => {
   await ctx.var.dbConn.beginTransaction();
   const items: GetAppRidesResponseItem[] = [];
   try {
-    const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      "SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC",
+    const [rides] = await ctx.var.dbConn.query<
+      Array<
+        Ride & {
+          chair_name: string;
+          chair_model: string;
+          owner_name: string;
+          coupon_discount: number | null;
+        } & RowDataPacket
+      >
+    >(
+      `SELECT rides.*, chairs.name AS chair_name, chairs.model AS chair_model, owners.name AS owner_name, coupons.discount AS coupon_discount
+       FROM rides
+       JOIN chairs ON chairs.id = rides.chair_id
+       JOIN owners ON owners.id = chairs.owner_id
+       LEFT JOIN coupons ON coupons.used_by = rides.id
+       WHERE rides.user_id = ? AND ${latestRideStatusSQL("rides.id")} = 'COMPLETED'
+       ORDER BY rides.created_at DESC`,
       [user.id],
     );
     for (const ride of rides) {
-      const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-      if (status !== "COMPLETED") {
-        continue;
-      }
-
-      const fare = await calculateDiscountedFare(
-        ctx.var.dbConn,
-        user.id,
+      const fare = calculateDiscountedFareWithDiscount(
         ride,
-        ride.pickup_latitude,
-        ride.pickup_longitude,
-        ride.destination_latitude,
-        ride.destination_longitude,
+        ride.coupon_discount ?? 0,
       );
-
-      const [[chair]] = await ctx.var.dbConn.query<
-        Array<Chair & RowDataPacket>
-      >("SELECT * FROM chairs WHERE id = ?", [ride.chair_id]);
-      const [[owner]] = await ctx.var.dbConn.query<
-        Array<Owner & RowDataPacket>
-      >("SELECT * FROM owners WHERE id = ?", [chair.owner_id]);
       const item = {
         id: ride.id,
         pickup_coordinate: {
@@ -203,10 +203,10 @@ export const appGetRides = async (ctx: Context<Environment>) => {
         requested_at: ride.created_at.getTime(),
         completed_at: ride.updated_at.getTime(),
         chair: {
-          id: chair.id,
-          name: chair.name,
-          model: chair.model,
-          owner: owner.name,
+          id: ride.chair_id as string,
+          name: ride.chair_name,
+          model: ride.chair_model,
+          owner: ride.owner_name,
         },
       };
       items.push(item);
@@ -239,17 +239,13 @@ export const appPostRides = async (ctx: Context<Environment>) => {
   const rideId = ulid();
   await ctx.var.dbConn.beginTransaction();
   try {
-    const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      "SELECT * FROM rides WHERE user_id = ?",
-      [user.id],
-    );
-    let continuingRideCount = 0;
-    for (const ride of rides) {
-      const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-      if (status !== "COMPLETED") {
-        continuingRideCount++;
-      }
-    }
+    const [[{ continuing_ride_count: continuingRideCount }]] =
+      await ctx.var.dbConn.query<
+        Array<{ continuing_ride_count: number } & RowDataPacket>
+      >(
+        `SELECT COUNT(*) AS continuing_ride_count FROM rides WHERE user_id = ? AND ${latestRideStatusSQL("rides.id")} <> 'COMPLETED'`,
+        [user.id],
+      );
     if (continuingRideCount > 0) {
       return ctx.text("ride already exists", 409);
     }
@@ -589,42 +585,18 @@ async function getChairStats(
   dbConn: Connection,
   chairId: string,
 ): Promise<AppGetNotificationResponseChairStats> {
-  const [rides] = await dbConn.query<Array<Ride & RowDataPacket>>(
-    "SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC",
+  // COMPLETED は ARRIVED / CARRYING を経た後にしか記録されないので、COMPLETED 済みのライドだけを集計すればよい
+  const [[stats]] = await dbConn.query<
+    Array<{ cnt: number; total: string | null } & RowDataPacket>
+  >(
+    `SELECT COUNT(*) AS cnt, SUM(rides.evaluation) AS total
+     FROM rides
+     WHERE rides.chair_id = ?
+       AND EXISTS (SELECT 1 FROM ride_statuses WHERE ride_statuses.ride_id = rides.id AND ride_statuses.status = 'COMPLETED')`,
     [chairId],
   );
-
-  let totalRidesCount = 0;
-  let totalEvaluation = 0.0;
-  for (const ride of rides) {
-    const [rideStatuses] = await dbConn.query<
-      Array<RideStatus & RowDataPacket>
-    >("SELECT * FROM ride_statuses WHERE ride_id = ? ORDER BY created_at", [
-      ride.id,
-    ]);
-    let arrivedAt: Date | undefined;
-    let pickupedAt: Date | undefined;
-    let isCompleted = false;
-    for (const status of rideStatuses) {
-      if (status.status === "ARRIVED") {
-        arrivedAt = status.created_at;
-      } else if (status.status === "CARRYING") {
-        pickupedAt = status.created_at;
-      }
-      if (status.status === "COMPLETED") {
-        isCompleted = true;
-      }
-      if (!arrivedAt || !pickupedAt) {
-        continue;
-      }
-      if (!isCompleted) {
-        continue;
-      }
-
-      totalRidesCount++;
-      totalEvaluation += ride.evaluation ?? 0;
-    }
-  }
+  const totalRidesCount = Number(stats.cnt);
+  const totalEvaluation = Number(stats.total ?? 0);
   return {
     total_rides_count: totalRidesCount,
     total_evaluation_avg:
@@ -661,8 +633,23 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
 
   await ctx.var.dbConn.beginTransaction();
   try {
-    const [chairs] = await ctx.var.dbConn.query<Array<Chair & RowDataPacket>>(
-      "SELECT * FROM chairs",
+    // 稼働中で、完了していないライドを持たず、位置情報がある椅子
+    const [chairs] = await ctx.var.dbConn.query<
+      Array<
+        Pick<Chair, "id" | "name" | "model"> &
+          Pick<ChairLocation, "latitude" | "longitude"> &
+          RowDataPacket
+      >
+    >(
+      `SELECT chairs.id, chairs.name, chairs.model, chair_latest_locations.latitude, chair_latest_locations.longitude
+       FROM chairs
+       JOIN chair_latest_locations ON chair_latest_locations.chair_id = chairs.id
+       WHERE chairs.is_active = TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM rides
+           WHERE rides.chair_id = chairs.id AND ${latestRideStatusSQL("rides.id")} <> 'COMPLETED'
+         )
+       ORDER BY chairs.id`,
     );
     const nearbyChairs: Array<{
       id: string;
@@ -671,36 +658,7 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
       current_coordinate: Coordinate;
     }> = [];
     for (const chair of chairs) {
-      if (!chair.is_active) continue;
-      const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-        "SELECT * FROM rides WHERE chair_id = ? ORDER BY created_at DESC",
-        [chair.id],
-      );
-      let skip = false;
-      for (const ride of rides) {
-        // 過去にライドが存在し、かつ、それが完了していない場合はスキップ
-        const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-        if (status !== "COMPLETED") {
-          skip = true;
-          break;
-        }
-      }
-      if (skip) {
-        continue;
-      }
-
-      // 最新の位置情報を取得
-      const [[chairLocation]] = await ctx.var.dbConn.query<
-        Array<ChairLocation & RowDataPacket>
-      >(
-        "SELECT * FROM chair_locations WHERE chair_id = ? ORDER BY created_at DESC LIMIT 1",
-        [chair.id],
-      );
-
-      if (!chairLocation) {
-        continue;
-      }
-
+      const chairLocation = chair;
       if (
         calculateDistance(
           coordinate.latitude,
