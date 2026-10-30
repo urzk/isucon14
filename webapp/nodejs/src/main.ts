@@ -30,6 +30,7 @@ import {
   ownerPostOwners,
 } from "./owner_handlers.js";
 import type { Environment } from "./types/hono.js";
+import { clearRowCache } from "./cache.js";
 import { execSync } from "node:child_process";
 import type { Server } from "node:http";
 import { internalGetMatching } from "./internal_handlers.js";
@@ -134,6 +135,7 @@ async function postInitialize(ctx: Context<Environment>) {
     return ctx.text(`Failed to initialize\n${error}`, 500);
   }
   clearAuthCache();
+  clearRowCache();
   try {
     await ctx.var.dbConn.query(
       "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'",

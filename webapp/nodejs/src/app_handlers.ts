@@ -30,6 +30,7 @@ import {
 import type { CountResult } from "./types/util.js";
 import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
 import { atoi } from "./utils/integer.js";
+import { getChairById } from "./cache.js";
 
 type AppPostUserRequest = Readonly<{
   username: string;
@@ -489,7 +490,8 @@ type AppGetNotificationResponse = {
 export const appGetNotification = async (ctx: Context<Environment>) => {
   let response: AppGetNotificationResponse;
   const user = ctx.var.user;
-  ctx.var.dbConn.beginTransaction();
+  // ライド・ステータス・椅子の統計を同じスナップショットから読む
+  await ctx.var.dbConn.beginTransaction();
   try {
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -537,9 +539,10 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
       retry_after_ms: 30,
     };
     if (ride.chair_id !== null) {
-      const [[chair]] = await ctx.var.dbConn.query<
-        Array<Chair & RowDataPacket>
-      >("SELECT * FROM chairs WHERE id = ?", [ride.chair_id]);
+      const chair = await getChairById(ctx.var.dbConn, ride.chair_id);
+      if (!chair) {
+        return ctx.text("chair not found", 500);
+      }
       const stats = await getChairStats(ctx.var.dbConn, chair.id);
       response.data.chair = {
         id: chair.id,
@@ -576,14 +579,11 @@ async function getChairStats(
   dbConn: Connection,
   chairId: string,
 ): Promise<AppGetNotificationResponseChairStats> {
-  // COMPLETED は ARRIVED / CARRYING を経た後にしか記録されないので、COMPLETED 済みのライドだけを集計すればよい
+  // COMPLETED は ARRIVED / CARRYING を経た後にしか記録されないので、完了済みのライドだけを集計すればよい
   const [[stats]] = await dbConn.query<
     Array<{ cnt: number; total: string | null } & RowDataPacket>
   >(
-    `SELECT COUNT(*) AS cnt, SUM(rides.evaluation) AS total
-     FROM rides
-     WHERE rides.chair_id = ?
-       AND EXISTS (SELECT 1 FROM ride_statuses WHERE ride_statuses.ride_id = rides.id AND ride_statuses.status = 'COMPLETED')`,
+    "SELECT COUNT(*) AS cnt, SUM(evaluation) AS total FROM rides WHERE chair_id = ? AND latest_status = 'COMPLETED'",
     [chairId],
   );
   const totalRidesCount = Number(stats.cnt);

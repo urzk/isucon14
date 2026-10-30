@@ -2,6 +2,7 @@ export type Chair = {
   id: string;
   ownerId: string;
   name: string;
+  model: string;
   is_active: boolean;
   access_token: string;
   created_at: Date;

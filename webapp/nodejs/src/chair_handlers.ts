@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { setCookie } from "hono/cookie";
 import type { RowDataPacket } from "mysql2";
 import { ulid } from "ulid";
+import { getUserById } from "./cache.js";
 import { insertRideStatus } from "./common.js";
 import type { Environment } from "./types/hono.js";
 import type {
@@ -9,7 +10,6 @@ import type {
   Owner,
   Ride,
   RideStatus,
-  User,
 } from "./types/models.js";
 import { secureRandomStr } from "./utils/random.js";
 
@@ -62,14 +62,9 @@ export const chairPostActivity = async (ctx: Context<Environment>) => {
 export const chairPostCoordinate = async (ctx: Context<Environment>) => {
   const reqJson = await ctx.req.json<Coordinate>();
   const chair = ctx.var.chair;
-  const chairLocationID = ulid();
-  await ctx.var.dbConn.beginTransaction();
   try {
+    // 位置履歴 (chair_locations) はどこからも読まれないため、最新位置と総移動距離だけを記録する
     const createdAt = new Date();
-    await ctx.var.dbConn.query(
-      "INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)",
-      [chairLocationID, chair.id, reqJson.latitude, reqJson.longitude, createdAt],
-    );
     // 最新位置と総移動距離を更新 (total_distance は更新前の位置との差分を加算するため先に評価させる)
     await ctx.var.dbConn.query(
       `INSERT INTO chair_latest_locations (chair_id, latitude, longitude, total_distance, total_distance_updated_at)
@@ -88,23 +83,28 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
     if (ride) {
       const status = ride.latest_status;
       if (status !== "COMPLETED" && status !== "CANCELED") {
+        let nextStatus: string | undefined;
         if (
           reqJson.latitude === ride.pickup_latitude &&
           reqJson.longitude === ride.pickup_longitude &&
           status === "ENROUTE"
         ) {
-          await insertRideStatus(ctx.var.dbConn, ride.id, "PICKUP");
+          nextStatus = "PICKUP";
         }
         if (
           reqJson.latitude === ride.destination_latitude &&
           reqJson.longitude === ride.destination_longitude &&
           status === "CARRYING"
         ) {
-          await insertRideStatus(ctx.var.dbConn, ride.id, "ARRIVED");
+          nextStatus = "ARRIVED";
+        }
+        if (nextStatus) {
+          await ctx.var.dbConn.beginTransaction();
+          await insertRideStatus(ctx.var.dbConn, ride.id, nextStatus);
+          await ctx.var.dbConn.commit();
         }
       }
     }
-    await ctx.var.dbConn.commit();
     return ctx.json({ recorded_at: createdAt.getTime() }, 200);
   } catch (e) {
     await ctx.var.dbConn.rollback();
@@ -115,7 +115,6 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
 export const chairGetNotification = async (ctx: Context<Environment>) => {
   const chair = ctx.var.chair;
 
-  await ctx.var.dbConn.beginTransaction();
   try {
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1",
@@ -135,10 +134,10 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
       ? yetSentRideStatus.status
       : ride.latest_status;
 
-    const [[user]] = await ctx.var.dbConn.query<Array<User & RowDataPacket>>(
-      "SELECT * FROM users WHERE id = ? FOR SHARE",
-      [ride.user_id],
-    );
+    const user = await getUserById(ctx.var.dbConn, ride.user_id);
+    if (!user) {
+      return ctx.text("user not found", 500);
+    }
 
     if (yetSentRideStatus?.id) {
       await ctx.var.dbConn.query(
@@ -147,7 +146,6 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
       );
     }
 
-    await ctx.var.dbConn.commit();
     return ctx.json(
       {
         data: {
