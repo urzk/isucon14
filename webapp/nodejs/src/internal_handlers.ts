@@ -29,7 +29,8 @@ export const internalGetMatching = async (ctx: Context<Environment>) => {
     return ctx.body(null, 204);
   }
 
-  // 稼働中で、割り当て済みのライドがすべて椅子に完了まで通知済み (chair_sent_at が6件) の椅子
+  // 稼働中で、割り当て済みのライドがすべて COMPLETED まで椅子に通知済みの椅子
+  // (通知件数で判定するとステータスの重複記録で完了前に空き扱いになりうるため、COMPLETED の通知有無で判定する)
   const [chairs] = await ctx.var.dbConn.query<Array<FreeChair & RowDataPacket>>(
     `SELECT chairs.id, chair_models.speed, chair_latest_locations.latitude, chair_latest_locations.longitude
      FROM chairs
@@ -39,7 +40,12 @@ export const internalGetMatching = async (ctx: Context<Environment>) => {
        AND NOT EXISTS (
          SELECT 1 FROM rides
          WHERE rides.chair_id = chairs.id
-           AND (SELECT COUNT(chair_sent_at) FROM ride_statuses WHERE ride_statuses.ride_id = rides.id) < 6
+           AND NOT EXISTS (
+             SELECT 1 FROM ride_statuses
+             WHERE ride_statuses.ride_id = rides.id
+               AND ride_statuses.status = 'COMPLETED'
+               AND ride_statuses.chair_sent_at IS NOT NULL
+           )
        )`,
   );
   const freeChairs = [...chairs];
