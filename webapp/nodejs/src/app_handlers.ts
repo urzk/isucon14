@@ -625,6 +625,7 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
   await ctx.var.dbConn.beginTransaction();
   try {
     // 稼働中で、完了していないライドを持たず、位置情報がある椅子
+    // (完了直後の椅子はクライアント側でまだライド中と見なされうるため、完了から1秒間は含めない)
     const [chairs] = await ctx.var.dbConn.query<
       Array<
         { id: string; name: string; model: string } & Pick<
@@ -640,7 +641,8 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
        WHERE chairs.is_active = TRUE
          AND NOT EXISTS (
            SELECT 1 FROM rides
-           WHERE rides.chair_id = chairs.id AND rides.latest_status <> 'COMPLETED'
+           WHERE rides.chair_id = chairs.id
+             AND (rides.latest_status <> 'COMPLETED' OR rides.updated_at > NOW(6) - INTERVAL 1 SECOND)
          )
        ORDER BY chairs.id`,
     );
