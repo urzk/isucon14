@@ -6,7 +6,7 @@ export const INITIAL_FARE = 500;
 export const FARE_PER_DISTANCE = 100;
 
 // 通知APIのポーリング間隔 (ms)。短すぎるとDB負荷が上がり全体が遅くなる
-export const NOTIFICATION_RETRY_AFTER_MS = 40;
+export const NOTIFICATION_RETRY_AFTER_MS = 60;
 
 // マンハッタン距離を求める
 export const calculateDistance = (
