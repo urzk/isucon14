@@ -1,5 +1,6 @@
-import type { Connection, RowDataPacket } from "mysql2/promise";
-import type { Ride, RideStatus } from "./types/models.js";
+import type { Connection } from "mysql2/promise";
+import { ulid } from "ulid";
+import type { Ride } from "./types/models.js";
 
 export const INITIAL_FARE = 500;
 export const FARE_PER_DISTANCE = 100;
@@ -40,10 +41,6 @@ export const calculateSale = (ride: Ride): number => {
   );
 };
 
-// ライドの最新ステータスを返す相関サブクエリ (rideIdColumn はライドIDを指すカラム名)
-export const latestRideStatusSQL = (rideIdColumn: string): string =>
-  `(SELECT status FROM ride_statuses WHERE ride_id = ${rideIdColumn} ORDER BY created_at DESC LIMIT 1)`;
-
 // 適用済みクーポンの割引額からライドの運賃を求める
 export const calculateDiscountedFareWithDiscount = (
   ride: Pick<
@@ -66,17 +63,21 @@ export const calculateDiscountedFareWithDiscount = (
   return INITIAL_FARE + Math.max(meteredFare - discount, 0);
 };
 
-export const getLatestRideStatus = async (
+// ステータス変更履歴を記録し、rides.latest_status も更新する
+// (latest_status の更新で updated_at が変わらないよう明示的に自身を代入する)
+export const insertRideStatus = async (
   dbConn: Connection,
   rideId: string,
-): Promise<string> => {
-  const [[{ status }]] = await dbConn.query<
-    Array<Pick<RideStatus, "status"> & RowDataPacket>
-  >(
-    "SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1",
-    [rideId],
+  status: string,
+): Promise<void> => {
+  await dbConn.query(
+    "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
+    [ulid(), rideId, status],
   );
-  return status;
+  await dbConn.query(
+    "UPDATE rides SET latest_status = ?, updated_at = updated_at WHERE id = ?",
+    [status, rideId],
+  );
 };
 
 export class ErroredUpstream extends Error {

@@ -16,3 +16,13 @@ FROM (SELECT chair_id,
             FROM chair_locations) tmp
       GROUP BY chair_id) d
        JOIN chair_locations l ON l.chair_id = d.chair_id AND l.created_at = d.updated_at;
+
+-- ライドの最新ステータスを rides に持たせる (ride_statuses を都度引かないため)
+-- updated_at は意味を持つ値なので、自動更新させないよう明示的に自身を代入する
+ALTER TABLE rides
+  ADD COLUMN latest_status ENUM ('MATCHING', 'ENROUTE', 'PICKUP', 'CARRYING', 'ARRIVED', 'COMPLETED') NOT NULL DEFAULT 'MATCHING',
+  ADD INDEX idx_chair_id_latest_status (chair_id, latest_status),
+  ADD INDEX idx_user_id_latest_status (user_id, latest_status);
+UPDATE rides
+SET latest_status = COALESCE((SELECT status FROM ride_statuses WHERE ride_id = rides.id ORDER BY created_at DESC LIMIT 1), 'MATCHING'),
+    updated_at    = updated_at;

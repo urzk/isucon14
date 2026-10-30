@@ -21,6 +21,7 @@ import {
 import {
   appAuthMiddleware,
   chairAuthMiddleware,
+  clearAuthCache,
   ownerAuthMiddleware,
 } from "./middlewares.js";
 import {
@@ -31,7 +32,7 @@ import {
 import type { Environment } from "./types/hono.js";
 import { execSync } from "node:child_process";
 import { internalGetMatching } from "./internal_handlers.js";
-import { createPool } from "mysql2/promise";
+import { createPool, type PoolConnection } from "mysql2/promise";
 
 const pool = createPool({
   host: process.env.ISUCON_DB_HOST || "127.0.0.1",
@@ -47,11 +48,21 @@ const app = new Hono<Environment>();
 app.use(
   createMiddleware<Environment>(async (ctx, next) => {
     const connection = await pool.getConnection();
+    // トランザクションを開始したリクエストだけ、終了時に ROLLBACK して後始末する
+    let inTransaction = false;
+    const beginTransaction = connection.beginTransaction;
+    connection.beginTransaction = function (this: PoolConnection) {
+      inTransaction = true;
+      return beginTransaction.call(this);
+    } as PoolConnection["beginTransaction"];
     ctx.set("dbConn", connection);
     try {
       await next();
     } finally {
-      await connection.rollback();
+      connection.beginTransaction = beginTransaction;
+      if (inTransaction) {
+        await connection.rollback();
+      }
       pool.releaseConnection(connection);
     }
   }),
@@ -117,6 +128,7 @@ async function postInitialize(ctx: Context<Environment>) {
   } catch (error) {
     return ctx.text(`Failed to initialize\n${error}`, 500);
   }
+  clearAuthCache();
   try {
     await ctx.var.dbConn.query(
       "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'",
