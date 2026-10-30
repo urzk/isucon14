@@ -57,76 +57,85 @@ export const appPostUsers = async (ctx: Context<Environment>) => {
   const userId = ulid();
   const accessToken = secureRandomStr(32);
   const invitationCode = secureRandomStr(15);
-  await ctx.var.dbConn.beginTransaction();
-  try {
-    await ctx.var.dbConn.query(
-      "INSERT INTO users (id, username, firstname, lastname, date_of_birth, access_token, invitation_code) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [
-        userId,
-        reqJson.username,
-        reqJson.firstname,
-        reqJson.lastname,
-        reqJson.date_of_birth,
-        accessToken,
-        invitationCode,
-      ],
-    );
-
-    // 初回登録キャンペーンのクーポンを付与
-    await ctx.var.dbConn.query(
-      "INSERT INTO coupons (user_id, code, discount) VALUES (?, ?, ?)",
-      [userId, "CP_NEW2024", 3000],
-    );
-
-    // 招待コードを使った登録
-    if (reqJson.invitation_code) {
-      // 招待する側の招待数をチェック
-      const [coupons] = await ctx.var.dbConn.query<
-        Array<Coupon & RowDataPacket>
-      >(
-        "SELECT * FROM coupons WHERE code = ? FOR UPDATE",
-        `INV_${reqJson.invitation_code}`,
+  // 同じ招待コードでの同時登録はデッドロックや報酬クーポンの重複になりうるので、その場合はやり直す
+  for (let attempt = 0; ; attempt++) {
+    await ctx.var.dbConn.beginTransaction();
+    try {
+      await ctx.var.dbConn.query(
+        "INSERT INTO users (id, username, firstname, lastname, date_of_birth, access_token, invitation_code) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+          userId,
+          reqJson.username,
+          reqJson.firstname,
+          reqJson.lastname,
+          reqJson.date_of_birth,
+          accessToken,
+          invitationCode,
+        ],
       );
-      if (coupons.length >= 3) {
-        return ctx.text("この招待コードは使用できません。", 400);
-      }
 
-      // ユーザーチェック
-      const [inviter] = await ctx.var.dbConn.query<Array<User & RowDataPacket>>(
-        "SELECT * FROM users WHERE invitation_code = ?",
-        [reqJson.invitation_code],
-      );
-      if (inviter.length === 0) {
-        return ctx.text("この招待コードは使用できません。", 400);
-      }
-
-      // 招待クーポン付与
+      // 初回登録キャンペーンのクーポンを付与
       await ctx.var.dbConn.query(
         "INSERT INTO coupons (user_id, code, discount) VALUES (?, ?, ?)",
-        [userId, `INV_${reqJson.invitation_code}`, 1500],
+        [userId, "CP_NEW2024", 3000],
       );
-      // 招待した人にもRewardを付与
-      await ctx.var.dbConn.query(
-        "INSERT INTO coupons (user_id, code, discount) VALUES (?, CONCAT(?, '_', FLOOR(UNIX_TIMESTAMP(NOW(3))*1000)), ?)",
-        [inviter[0].id, `RWD_${reqJson.invitation_code}`, 1000],
+
+      // 招待コードを使った登録
+      if (reqJson.invitation_code) {
+        // 招待する側の招待数をチェック
+        const [coupons] = await ctx.var.dbConn.query<
+          Array<Coupon & RowDataPacket>
+        >(
+          "SELECT * FROM coupons WHERE code = ? FOR UPDATE",
+          `INV_${reqJson.invitation_code}`,
+        );
+        if (coupons.length >= 3) {
+          return ctx.text("この招待コードは使用できません。", 400);
+        }
+
+        // ユーザーチェック
+        const [inviter] = await ctx.var.dbConn.query<Array<User & RowDataPacket>>(
+          "SELECT * FROM users WHERE invitation_code = ?",
+          [reqJson.invitation_code],
+        );
+        if (inviter.length === 0) {
+          return ctx.text("この招待コードは使用できません。", 400);
+        }
+
+        // 招待クーポン付与
+        await ctx.var.dbConn.query(
+          "INSERT INTO coupons (user_id, code, discount) VALUES (?, ?, ?)",
+          [userId, `INV_${reqJson.invitation_code}`, 1500],
+        );
+        // 招待した人にもRewardを付与
+        await ctx.var.dbConn.query(
+          "INSERT INTO coupons (user_id, code, discount) VALUES (?, CONCAT(?, '_', FLOOR(UNIX_TIMESTAMP(NOW(3))*1000)), ?)",
+          [inviter[0].id, `RWD_${reqJson.invitation_code}`, 1000],
+        );
+      }
+
+      await ctx.var.dbConn.commit();
+      setCookie(ctx, "app_session", accessToken, {
+        path: "/",
+      });
+
+      return ctx.json(
+        {
+          id: userId,
+          invitation_code: invitationCode,
+        },
+        201,
       );
+    } catch (e) {
+      await ctx.var.dbConn.rollback();
+      const errno = (e as { errno?: number }).errno;
+      if ((errno === 1213 || errno === 1062) && attempt < 5) {
+        console.error(`appPostUsers retry (errno=${errno}): ${e}`);
+        continue;
+      }
+      console.error(`appPostUsers failed: ${e}`);
+      return ctx.text(`${e}`, 500);
     }
-
-    await ctx.var.dbConn.commit();
-    setCookie(ctx, "app_session", accessToken, {
-      path: "/",
-    });
-
-    return ctx.json(
-      {
-        id: userId,
-        invitation_code: invitationCode,
-      },
-      201,
-    );
-  } catch (e) {
-    await ctx.var.dbConn.rollback();
-    return ctx.text(`${e}`, 500);
   }
 };
 
