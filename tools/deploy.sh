@@ -36,6 +36,8 @@ if [ -f tools/conf/env.sh ] && ! sudo cmp -s tools/conf/env.sh /home/isucon/env.
   sudo systemctl restart isuride-matcher
 fi
 
+# 型エラーで起動できなくなるのを防ぐため、再起動前にビルドが通ることを確認する
+(cd /home/isucon/webapp/nodejs && sudo -u isucon /home/isucon/.x npx tsc)
 sudo systemctl restart isuride-node
 for i in $(seq 1 60); do
   curl -s -o /dev/null http://localhost:8080/api/app/notification && break

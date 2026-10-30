@@ -636,8 +636,10 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
     // 稼働中で、完了していないライドを持たず、位置情報がある椅子
     const [chairs] = await ctx.var.dbConn.query<
       Array<
-        Pick<Chair, "id" | "name" | "model"> &
-          Pick<ChairLocation, "latitude" | "longitude"> &
+        { id: string; name: string; model: string } & Pick<
+            ChairLocation,
+            "latitude" | "longitude"
+          > &
           RowDataPacket
       >
     >(

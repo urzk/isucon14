@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ローカルから実行する。アプリ1号機に ref をデプロイし、ベンチ機で負荷走行してスコアを表示する
 # usage: tools/bench.sh <git-ref> [label]
-set -eu
+set -euo pipefail
 REF=${1:-origin/main}
 LABEL=${2:-$(date +%H%M%S)}
 APP=isu14-1
