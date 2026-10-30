@@ -5,7 +5,6 @@ import { ulid } from "ulid";
 import { getLatestRideStatus } from "./common.js";
 import type { Environment } from "./types/hono.js";
 import type {
-  ChairLocation,
   Coordinate,
   Owner,
   Ride,
@@ -66,13 +65,22 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
   const chairLocationID = ulid();
   await ctx.var.dbConn.beginTransaction();
   try {
+    const createdAt = new Date();
     await ctx.var.dbConn.query(
-      "INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)",
-      [chairLocationID, chair.id, reqJson.latitude, reqJson.longitude],
+      "INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)",
+      [chairLocationID, chair.id, reqJson.latitude, reqJson.longitude, createdAt],
     );
-    const [[location]] = await ctx.var.dbConn.query<
-      Array<ChairLocation & RowDataPacket>
-    >("SELECT * FROM chair_locations WHERE id = ?", [chairLocationID]);
+    // 最新位置と総移動距離を更新 (total_distance は更新前の位置との差分を加算するため先に評価させる)
+    await ctx.var.dbConn.query(
+      `INSERT INTO chair_latest_locations (chair_id, latitude, longitude, total_distance, total_distance_updated_at)
+       VALUES (?, ?, ?, 0, ?)
+       ON DUPLICATE KEY UPDATE
+         total_distance = total_distance + ABS(VALUES(latitude) - latitude) + ABS(VALUES(longitude) - longitude),
+         latitude = VALUES(latitude),
+         longitude = VALUES(longitude),
+         total_distance_updated_at = VALUES(total_distance_updated_at)`,
+      [chair.id, reqJson.latitude, reqJson.longitude, createdAt],
+    );
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1",
       [chair.id],
@@ -103,7 +111,7 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
       }
     }
     await ctx.var.dbConn.commit();
-    return ctx.json({ recorded_at: location.created_at.getTime() }, 200);
+    return ctx.json({ recorded_at: createdAt.getTime() }, 200);
   } catch (e) {
     await ctx.var.dbConn.rollback();
     return ctx.text(`${e}`, 500);

@@ -1,63 +1,47 @@
 import { ErroredUpstream } from "./common.js";
-import type { Ride } from "./types/models.js";
 import { setTimeout } from "node:timers/promises";
 
 type PaymentGatewayPostPaymentRequest = {
   amount: number;
 };
 
+const MAX_PAYMENT_RETRY = 30;
+
+// 決済マイクロサービスは負荷に応じてランダムに失敗するため、
+// ライドIDを Idempotency-Key にして成功 (204) するまでリトライする
 export const requestPaymentGatewayPostPayment = async (
   paymentGatewayURL: string,
   token: string,
   param: PaymentGatewayPostPaymentRequest,
-  retrieveRidesOrderByCreatedAtAsc: () => Promise<Ride[]>,
+  idempotencyKey: string,
 ): Promise<ErroredUpstream | Error | undefined> => {
-  // 失敗したらとりあえずリトライ
-  // FIXME: 社内決済マイクロサービスのインフラに異常が発生していて、同時にたくさんリクエストすると変なことになる可能性あり
-  let retry = 0;
-  while (true) {
+  let lastError = "";
+  for (let retry = 0; retry < MAX_PAYMENT_RETRY; retry++) {
     try {
       const res = await fetch(`${paymentGatewayURL}/payments`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
+          "Idempotency-Key": idempotencyKey,
         },
         body: JSON.stringify(param),
       });
-
-      if (res.status !== 204) {
-        // エラーが返ってきても成功している場合があるので、社内決済マイクロサービスに問い合わせ
-        const getRes = await fetch(`${paymentGatewayURL}/payments`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        // GET /payments は障害と関係なく200が返るので、200以外は回復不能なエラーとする
-        if (getRes.status !== 200) {
-          return new Error(
-            `[GET /payments] unexpected status code (${getRes.status})`,
-          );
-        }
-        const payments = await getRes.json();
-
-        const rides = await retrieveRidesOrderByCreatedAtAsc();
-        if (rides.length !== payments.length) {
-          return new ErroredUpstream(
-            `unexpected number of payments: ${rides.length} != ${payments.length}`,
-          );
-        }
+      if (res.status === 204) {
+        return undefined;
       }
-      break;
+      if (res.status === 400 || res.status === 422) {
+        return new Error(
+          `[POST /payments] unexpected status code (${res.status}): ${await res.text()}`,
+        );
+      }
+      // 409 (同じキーのリクエストが処理中) や 5xx はリトライする
+      lastError = `status ${res.status}`;
+      await res.body?.cancel();
     } catch (err) {
-      if (retry < 5) {
-        retry++;
-        await setTimeout(100);
-      } else {
-        throw err;
-      }
+      lastError = `${err}`;
     }
+    await setTimeout(50);
   }
+  return new ErroredUpstream(`payment failed after retries: ${lastError}`);
 };

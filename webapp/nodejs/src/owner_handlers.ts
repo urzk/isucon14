@@ -47,15 +47,28 @@ export const ownerGetSales = async (ctx: Context<Environment>) => {
       [owner.id],
     );
 
+    const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
+      `SELECT rides.*
+       FROM rides
+       JOIN chairs ON chairs.id = rides.chair_id
+       JOIN ride_statuses ON rides.id = ride_statuses.ride_id
+       WHERE chairs.owner_id = ? AND ride_statuses.status = 'COMPLETED' AND rides.updated_at BETWEEN ? AND ? + INTERVAL 999 MICROSECOND`,
+      [owner.id, since, until],
+    );
+    const salesByChairId = new Map<string, number>();
+    for (const ride of rides) {
+      const chairId = ride.chair_id as string;
+      salesByChairId.set(
+        chairId,
+        (salesByChairId.get(chairId) ?? 0) + calculateSale(ride),
+      );
+    }
+
     let totalSales = 0;
     const chairSales = [];
     const modelSalesByModel: { [key: string]: number } = {};
     for (const chair of chairs) {
-      const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-        "SELECT rides.* FROM rides JOIN ride_statuses ON rides.id = ride_statuses.ride_id WHERE chair_id = ? AND status = 'COMPLETED' AND updated_at BETWEEN ? AND ? + INTERVAL 999 MICROSECOND",
-        [chair.id, since, until],
-      );
-      const sales = sumSales(rides);
+      const sales = salesByChairId.get(chair.id) ?? 0;
       totalSales += sales;
       chairSales.push({ id: chair.id, name: chair.name, sales });
       modelSalesByModel[chair.model] =
@@ -106,27 +119,19 @@ export const ownerGetChairs = async (ctx: Context<Environment>) => {
   const [chairs] = await ctx.var.dbConn.query<
     Array<ChairWithDetail & RowDataPacket>
   >(
-    `SELECT id,
-       owner_id,
-       name,
-       access_token,
-       model,
-       is_active,
-       created_at,
-       updated_at,
-       IFNULL(total_distance, 0) AS total_distance,
-       total_distance_updated_at
+    `SELECT chairs.id,
+       chairs.owner_id,
+       chairs.name,
+       chairs.access_token,
+       chairs.model,
+       chairs.is_active,
+       chairs.created_at,
+       chairs.updated_at,
+       IFNULL(chair_latest_locations.total_distance, 0) AS total_distance,
+       chair_latest_locations.total_distance_updated_at
 FROM chairs
-       LEFT JOIN (SELECT chair_id,
-                          SUM(IFNULL(distance, 0)) AS total_distance,
-                          MAX(created_at)          AS total_distance_updated_at
-                   FROM (SELECT chair_id,
-                                created_at,
-                                ABS(latitude - LAG(latitude) OVER (PARTITION BY chair_id ORDER BY created_at)) +
-                                ABS(longitude - LAG(longitude) OVER (PARTITION BY chair_id ORDER BY created_at)) AS distance
-                         FROM chair_locations) tmp
-                   GROUP BY chair_id) distance_table ON distance_table.chair_id = chairs.id
-WHERE owner_id = ?`,
+       LEFT JOIN chair_latest_locations ON chair_latest_locations.chair_id = chairs.id
+WHERE chairs.owner_id = ?`,
     [owner.id],
   );
 
@@ -148,6 +153,3 @@ WHERE owner_id = ?`,
   return ctx.json({ chairs: chairResponse });
 };
 
-function sumSales(rides: Ride[]) {
-  return rides.reduce((acc, ride) => acc + calculateSale(ride), 0);
-}
