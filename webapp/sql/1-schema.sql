@@ -155,3 +155,13 @@ CREATE TABLE chair_latest_locations
   total_distance_updated_at DATETIME(6) NOT NULL,
   PRIMARY KEY (chair_id)
 );
+
+-- 椅子ごとの完了ライド数と評価の合計 (評価時に積算する)
+DROP TABLE IF EXISTS chair_stats;
+CREATE TABLE chair_stats
+(
+  chair_id          VARCHAR(26) NOT NULL,
+  total_rides_count INTEGER     NOT NULL DEFAULT 0,
+  total_evaluation  INTEGER     NOT NULL DEFAULT 0,
+  PRIMARY KEY (chair_id)
+);
