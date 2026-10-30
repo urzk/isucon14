@@ -6,3 +6,6 @@ ISUCON_DB_NAME="isuride"
 
 # マッチング間隔（秒）
 ISUCON_MATCHING_INTERVAL=0.2
+
+# Node.js のワーカープロセス数
+ISUCON_NODE_WORKERS=2
