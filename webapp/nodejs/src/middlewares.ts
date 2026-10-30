@@ -4,6 +4,17 @@ import type { RowDataPacket } from "mysql2/promise";
 import type { Environment } from "./types/hono.js";
 import type { Chair, Owner, User } from "./types/models.js";
 
+// アクセストークンとそれに紐づく行は変化しないため、プロセス内でキャッシュする
+const userByToken = new Map<string, User>();
+const ownerByToken = new Map<string, Owner>();
+const chairByToken = new Map<string, Chair>();
+
+export const clearAuthCache = (): void => {
+  userByToken.clear();
+  ownerByToken.clear();
+  chairByToken.clear();
+};
+
 export const appAuthMiddleware = createMiddleware<Environment>(
   async (ctx, next) => {
     const accessToken = getCookie(ctx, "app_session");
@@ -11,12 +22,16 @@ export const appAuthMiddleware = createMiddleware<Environment>(
       return ctx.text("app_session cookie is required", 401);
     }
     try {
-      const [[user]] = await ctx.var.dbConn.query<Array<User & RowDataPacket>>(
-        "SELECT * FROM users WHERE access_token = ?",
-        [accessToken],
-      );
+      let user = userByToken.get(accessToken);
       if (!user) {
-        return ctx.text("invalid access token", 401);
+        [[user]] = await ctx.var.dbConn.query<Array<User & RowDataPacket>>(
+          "SELECT * FROM users WHERE access_token = ?",
+          [accessToken],
+        );
+        if (!user) {
+          return ctx.text("invalid access token", 401);
+        }
+        userByToken.set(accessToken, user);
       }
       ctx.set("user", user);
     } catch (error) {
@@ -33,11 +48,16 @@ export const ownerAuthMiddleware = createMiddleware<Environment>(
       return ctx.text("owner_session cookie is required", 401);
     }
     try {
-      const [[owner]] = await ctx.var.dbConn.query<
-        Array<Owner & RowDataPacket>
-      >("SELECT * FROM owners WHERE access_token = ?", [accessToken]);
+      let owner = ownerByToken.get(accessToken);
       if (!owner) {
-        return ctx.text("invalid access token", 401);
+        [[owner]] = await ctx.var.dbConn.query<Array<Owner & RowDataPacket>>(
+          "SELECT * FROM owners WHERE access_token = ?",
+          [accessToken],
+        );
+        if (!owner) {
+          return ctx.text("invalid access token", 401);
+        }
+        ownerByToken.set(accessToken, owner);
       }
       ctx.set("owner", owner);
     } catch (error) {
@@ -54,11 +74,16 @@ export const chairAuthMiddleware = createMiddleware<Environment>(
       return ctx.text("chair_session cookie is required", 401);
     }
     try {
-      const [[chair]] = await ctx.var.dbConn.query<
-        Array<Chair & RowDataPacket>
-      >("SELECT * FROM chairs WHERE access_token = ?", [accessToken]);
+      let chair = chairByToken.get(accessToken);
       if (!chair) {
-        return ctx.text("invalid access token", 401);
+        [[chair]] = await ctx.var.dbConn.query<Array<Chair & RowDataPacket>>(
+          "SELECT * FROM chairs WHERE access_token = ?",
+          [accessToken],
+        );
+        if (!chair) {
+          return ctx.text("invalid access token", 401);
+        }
+        chairByToken.set(accessToken, chair);
       }
       ctx.set("chair", chair);
     } catch (error) {

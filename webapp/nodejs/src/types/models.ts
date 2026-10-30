@@ -48,6 +48,7 @@ export type Ride = {
   destination_latitude: number;
   destination_longitude: number;
   evaluation: number | null;
+  latest_status: string;
   created_at: Date;
   updated_at: Date;
 };

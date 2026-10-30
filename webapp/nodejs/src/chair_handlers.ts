@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { setCookie } from "hono/cookie";
 import type { RowDataPacket } from "mysql2";
 import { ulid } from "ulid";
-import { getLatestRideStatus } from "./common.js";
+import { insertRideStatus } from "./common.js";
 import type { Environment } from "./types/hono.js";
 import type {
   Coordinate,
@@ -86,27 +86,21 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
       [chair.id],
     );
     if (ride) {
-      const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
+      const status = ride.latest_status;
       if (status !== "COMPLETED" && status !== "CANCELED") {
         if (
           reqJson.latitude === ride.pickup_latitude &&
           reqJson.longitude === ride.pickup_longitude &&
           status === "ENROUTE"
         ) {
-          await ctx.var.dbConn.query(
-            "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
-            [ulid(), ride.id, "PICKUP"],
-          );
+          await insertRideStatus(ctx.var.dbConn, ride.id, "PICKUP");
         }
         if (
           reqJson.latitude === ride.destination_latitude &&
           reqJson.longitude === ride.destination_longitude &&
           status === "CARRYING"
         ) {
-          await ctx.var.dbConn.query(
-            "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
-            [ulid(), ride.id, "ARRIVED"],
-          );
+          await insertRideStatus(ctx.var.dbConn, ride.id, "ARRIVED");
         }
       }
     }
@@ -139,7 +133,7 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
     );
     const status = yetSentRideStatus
       ? yetSentRideStatus.status
-      : await getLatestRideStatus(ctx.var.dbConn, ride.id);
+      : ride.latest_status;
 
     const [[user]] = await ctx.var.dbConn.query<Array<User & RowDataPacket>>(
       "SELECT * FROM users WHERE id = ? FOR SHARE",
@@ -201,21 +195,14 @@ export const chairPostRideStatus = async (ctx: Context<Environment>) => {
     switch (reqJson.status) {
       // Acknowledge the ride
       case "ENROUTE":
-        await ctx.var.dbConn.query(
-          "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
-          [ulid(), ride.id, "ENROUTE"],
-        );
+        await insertRideStatus(ctx.var.dbConn, ride.id, "ENROUTE");
         break;
       // After Picking up user
       case "CARRYING": {
-        const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-        if (status !== "PICKUP") {
+        if (ride.latest_status !== "PICKUP") {
           return ctx.text("chair has not arrived yet", 400);
         }
-        await ctx.var.dbConn.query(
-          "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
-          [ulid(), ride.id, "CARRYING"],
-        );
+        await insertRideStatus(ctx.var.dbConn, ride.id, "CARRYING");
         break;
       }
       default:

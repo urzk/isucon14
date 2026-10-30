@@ -21,6 +21,7 @@ import {
 import {
   appAuthMiddleware,
   chairAuthMiddleware,
+  clearAuthCache,
   ownerAuthMiddleware,
 } from "./middlewares.js";
 import {
@@ -30,8 +31,9 @@ import {
 } from "./owner_handlers.js";
 import type { Environment } from "./types/hono.js";
 import { execSync } from "node:child_process";
+import type { Server } from "node:http";
 import { internalGetMatching } from "./internal_handlers.js";
-import { createPool } from "mysql2/promise";
+import { createPool, type PoolConnection } from "mysql2/promise";
 
 const pool = createPool({
   host: process.env.ISUCON_DB_HOST || "127.0.0.1",
@@ -47,11 +49,21 @@ const app = new Hono<Environment>();
 app.use(
   createMiddleware<Environment>(async (ctx, next) => {
     const connection = await pool.getConnection();
+    // トランザクションを開始したリクエストだけ、終了時に ROLLBACK して後始末する
+    let inTransaction = false;
+    const beginTransaction = connection.beginTransaction;
+    connection.beginTransaction = function (this: PoolConnection) {
+      inTransaction = true;
+      return beginTransaction.call(this);
+    } as PoolConnection["beginTransaction"];
     ctx.set("dbConn", connection);
     try {
       await next();
     } finally {
-      await connection.rollback();
+      connection.beginTransaction = beginTransaction;
+      if (inTransaction) {
+        await connection.rollback();
+      }
       pool.releaseConnection(connection);
     }
   }),
@@ -100,7 +112,7 @@ app.post(
 app.get("/api/internal/matching", internalGetMatching);
 
 const port = 8080;
-serve(
+const server = serve(
   {
     fetch: app.fetch,
     port,
@@ -109,6 +121,10 @@ serve(
     console.log(`Server is running on http://localhost:${addr.port}`);
   },
 );
+// nginx が keepalive で使い回す接続を先に閉じて 502 にならないよう、nginx 側より長くする
+const httpServer = server as Server;
+httpServer.keepAliveTimeout = 120_000;
+httpServer.headersTimeout = 121_000;
 
 async function postInitialize(ctx: Context<Environment>) {
   const body = await ctx.req.json<{ payment_server: string }>();
@@ -117,6 +133,7 @@ async function postInitialize(ctx: Context<Environment>) {
   } catch (error) {
     return ctx.text(`Failed to initialize\n${error}`, 500);
   }
+  clearAuthCache();
   try {
     await ctx.var.dbConn.query(
       "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'",

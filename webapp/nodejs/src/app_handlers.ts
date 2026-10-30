@@ -25,9 +25,7 @@ import {
   calculateFare,
   ErroredUpstream,
   FARE_PER_DISTANCE,
-  getLatestRideStatus,
   INITIAL_FARE,
-  latestRideStatusSQL,
 } from "./common.js";
 import type { CountResult } from "./types/util.js";
 import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
@@ -179,7 +177,7 @@ export const appGetRides = async (ctx: Context<Environment>) => {
        JOIN chairs ON chairs.id = rides.chair_id
        JOIN owners ON owners.id = chairs.owner_id
        LEFT JOIN coupons ON coupons.used_by = rides.id
-       WHERE rides.user_id = ? AND ${latestRideStatusSQL("rides.id")} = 'COMPLETED'
+       WHERE rides.user_id = ? AND rides.latest_status = 'COMPLETED'
        ORDER BY rides.created_at DESC`,
       [user.id],
     );
@@ -243,7 +241,7 @@ export const appPostRides = async (ctx: Context<Environment>) => {
       await ctx.var.dbConn.query<
         Array<{ continuing_ride_count: number } & RowDataPacket>
       >(
-        `SELECT COUNT(*) AS continuing_ride_count FROM rides WHERE user_id = ? AND ${latestRideStatusSQL("rides.id")} <> 'COMPLETED'`,
+        `SELECT COUNT(*) AS continuing_ride_count FROM rides WHERE user_id = ? AND latest_status <> 'COMPLETED'`,
         [user.id],
       );
     if (continuingRideCount > 0) {
@@ -397,13 +395,12 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
     if (!ride) {
       return ctx.text("ride not found", 404);
     }
-    const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-    if (status !== "ARRIVED") {
+    if (ride.latest_status !== "ARRIVED") {
       return ctx.text("not arrived yet", 400);
     }
 
     const [result] = await ctx.var.dbConn.query<ResultSetHeader>(
-      "UPDATE rides SET evaluation = ? WHERE id = ?",
+      "UPDATE rides SET evaluation = ?, latest_status = 'COMPLETED' WHERE id = ?",
       [reqJson.evaluation, rideId],
     );
     if (result.affectedRows === 0) {
@@ -509,7 +506,7 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
     );
     const status = yetSentRideStatus
       ? yetSentRideStatus.status
-      : await getLatestRideStatus(ctx.var.dbConn, ride.id);
+      : ride.latest_status;
 
     const fare = await calculateDiscountedFare(
       ctx.var.dbConn,
@@ -643,7 +640,7 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
        WHERE chairs.is_active = TRUE
          AND NOT EXISTS (
            SELECT 1 FROM rides
-           WHERE rides.chair_id = chairs.id AND ${latestRideStatusSQL("rides.id")} <> 'COMPLETED'
+           WHERE rides.chair_id = chairs.id AND rides.latest_status <> 'COMPLETED'
          )
        ORDER BY chairs.id`,
     );
