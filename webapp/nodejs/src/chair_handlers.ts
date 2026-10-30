@@ -66,7 +66,7 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
     // 位置履歴 (chair_locations) はどこからも読まれないため、最新位置と総移動距離だけを記録する
     const createdAt = new Date();
     // 最新位置と総移動距離を更新 (total_distance は更新前の位置との差分を加算するため先に評価させる)
-    await ctx.var.dbConn.query(
+    await ctx.var.dbConn.execute(
       `INSERT INTO chair_latest_locations (chair_id, latitude, longitude, total_distance, total_distance_updated_at)
        VALUES (?, ?, ?, 0, ?)
        ON DUPLICATE KEY UPDATE
@@ -76,7 +76,7 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
          total_distance_updated_at = VALUES(total_distance_updated_at)`,
       [chair.id, reqJson.latitude, reqJson.longitude, createdAt],
     );
-    const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
+    const [[ride]] = await ctx.var.dbConn.execute<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1",
       [chair.id],
     );
@@ -116,7 +116,7 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
   const chair = ctx.var.chair;
 
   try {
-    const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
+    const [[ride]] = await ctx.var.dbConn.execute<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1",
       [chair.id],
     );
@@ -124,7 +124,7 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
       return ctx.json({ retry_after_ms: NOTIFICATION_RETRY_AFTER_MS }, 200);
     }
 
-    const [[yetSentRideStatus]] = await ctx.var.dbConn.query<
+    const [[yetSentRideStatus]] = await ctx.var.dbConn.execute<
       Array<RideStatus & RowDataPacket>
     >(
       "SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1",
@@ -140,7 +140,7 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
     }
 
     if (yetSentRideStatus?.id) {
-      await ctx.var.dbConn.query(
+      await ctx.var.dbConn.execute(
         "UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?",
         [yetSentRideStatus.id],
       );

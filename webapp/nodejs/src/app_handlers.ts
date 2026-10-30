@@ -494,14 +494,14 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
   // ライド・ステータス・椅子の統計を同じスナップショットから読む
   await ctx.var.dbConn.beginTransaction();
   try {
-    const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
+    const [[ride]] = await ctx.var.dbConn.execute<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
       [user.id],
     );
     if (!ride) {
       return ctx.json({ retry_after_ms: NOTIFICATION_RETRY_AFTER_MS }, 200);
     }
-    const [[yetSentRideStatus]] = await ctx.var.dbConn.query<
+    const [[yetSentRideStatus]] = await ctx.var.dbConn.execute<
       Array<RideStatus & RowDataPacket>
     >(
       "SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1",
@@ -557,7 +557,7 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
     }
 
     if (yetSentRideStatus?.id) {
-      await ctx.var.dbConn.query(
+      await ctx.var.dbConn.execute(
         "UPDATE ride_statuses SET app_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?",
         [yetSentRideStatus.id],
       );
@@ -581,7 +581,7 @@ async function getChairStats(
   chairId: string,
 ): Promise<AppGetNotificationResponseChairStats> {
   // COMPLETED は ARRIVED / CARRYING を経た後にしか記録されないので、完了済みのライドだけを集計すればよい
-  const [[stats]] = await dbConn.query<
+  const [[stats]] = await dbConn.execute<
     Array<{ cnt: number; total: string | null } & RowDataPacket>
   >(
     "SELECT COUNT(*) AS cnt, SUM(evaluation) AS total FROM rides WHERE chair_id = ? AND latest_status = 'COMPLETED'",
