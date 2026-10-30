@@ -22,7 +22,8 @@ FROM (SELECT chair_id,
 ALTER TABLE rides
   ADD COLUMN latest_status ENUM ('MATCHING', 'ENROUTE', 'PICKUP', 'CARRYING', 'ARRIVED', 'COMPLETED') NOT NULL DEFAULT 'MATCHING',
   ADD INDEX idx_chair_id_latest_status (chair_id, latest_status),
-  ADD INDEX idx_user_id_latest_status (user_id, latest_status);
+  ADD INDEX idx_user_id_latest_status (user_id, latest_status),
+  ADD INDEX idx_latest_status_chair_id (latest_status, chair_id);
 UPDATE rides
 SET latest_status = COALESCE((SELECT status FROM ride_statuses WHERE ride_id = rides.id ORDER BY created_at DESC LIMIT 1), 'MATCHING'),
     updated_at    = updated_at;
