@@ -447,13 +447,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       paymentGatewayURL,
       paymentToken.token,
       paymentGatewayRequest,
-      async () => {
-        const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-          "SELECT * FROM rides WHERE user_id = ? ORDER BY created_at ASC",
-          [ride.user_id],
-        );
-        return rides;
-      },
+      ride.id,
     );
     if (err instanceof ErroredUpstream) {
       return ctx.text(`${err}`, 502);
