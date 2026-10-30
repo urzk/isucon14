@@ -490,6 +490,8 @@ type AppGetNotificationResponse = {
 export const appGetNotification = async (ctx: Context<Environment>) => {
   let response: AppGetNotificationResponse;
   const user = ctx.var.user;
+  // ライド・ステータス・椅子の統計を同じスナップショットから読む
+  await ctx.var.dbConn.beginTransaction();
   try {
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -560,6 +562,7 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
       );
     }
 
+    await ctx.var.dbConn.commit();
     return ctx.json(response, 200);
   } catch (e) {
     await ctx.var.dbConn.rollback();
