@@ -1,5 +1,5 @@
 [mysqld]
-innodb_flush_log_at_trx_commit = 2
+innodb_flush_log_at_trx_commit = 0
 disable-log-bin
 innodb_buffer_pool_size = 1G
 max_connections = 1000
@@ -11,3 +11,4 @@ long_query_time = 0
 bind-address = 0.0.0.0
 mysqlx-bind-address = 127.0.0.1
 performance_schema = OFF
+innodb_doublewrite = 0
