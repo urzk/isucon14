@@ -29,25 +29,36 @@ export const internalGetMatching = async (ctx: Context<Environment>) => {
     return ctx.body(null, 204);
   }
 
-  // 稼働中で、割り当て済みのライドがすべて COMPLETED まで椅子に通知済みの椅子
-  // (通知件数で判定するとステータスの重複記録で完了前に空き扱いになりうるため、COMPLETED の通知有無で判定する)
-  const [chairs] = await ctx.var.dbConn.query<Array<FreeChair & RowDataPacket>>(
+  // 割り当て済みのライドがすべて COMPLETED まで椅子に通知済みの椅子だけが空き
+  //  - 完了していないライドを持つ椅子は使用中
+  //  - 完了していても、椅子に未通知のステータスが残っている椅子は使用中
+  //    (未通知のステータスは古い順に通知されるので、COMPLETED の通知済みと同値)
+  const [unfinished] = await ctx.var.dbConn.query<
+    Array<{ chair_id: string } & RowDataPacket>
+  >(
+    "SELECT chair_id FROM rides WHERE latest_status <> 'COMPLETED' AND chair_id IS NOT NULL",
+  );
+  const [unsent] = await ctx.var.dbConn.query<
+    Array<{ chair_id: string } & RowDataPacket>
+  >(
+    `SELECT DISTINCT rides.chair_id
+     FROM ride_statuses JOIN rides ON rides.id = ride_statuses.ride_id
+     WHERE ride_statuses.chair_sent_at IS NULL AND rides.chair_id IS NOT NULL`,
+  );
+  const busyChairIds = new Set<string>();
+  for (const r of unfinished) busyChairIds.add(r.chair_id);
+  for (const r of unsent) busyChairIds.add(r.chair_id);
+
+  const [activeChairs] = await ctx.var.dbConn.query<
+    Array<FreeChair & RowDataPacket>
+  >(
     `SELECT chairs.id, chair_models.speed, chair_latest_locations.latitude, chair_latest_locations.longitude
      FROM chairs
      LEFT JOIN chair_models ON chair_models.name = chairs.model
      LEFT JOIN chair_latest_locations ON chair_latest_locations.chair_id = chairs.id
-     WHERE chairs.is_active = TRUE
-       AND NOT EXISTS (
-         SELECT 1 FROM rides
-         WHERE rides.chair_id = chairs.id
-           AND NOT EXISTS (
-             SELECT 1 FROM ride_statuses
-             WHERE ride_statuses.ride_id = rides.id
-               AND ride_statuses.status = 'COMPLETED'
-               AND ride_statuses.chair_sent_at IS NOT NULL
-           )
-       )`,
+     WHERE chairs.is_active = TRUE`,
   );
+  const chairs = activeChairs.filter((c) => !busyChairIds.has(c.id));
   const freeChairs = [...chairs];
 
   for (const ride of rides) {
