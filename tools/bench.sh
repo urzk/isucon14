@@ -5,6 +5,7 @@ set -euo pipefail
 REF=${1:-origin/main}
 LABEL=${2:-$(date +%H%M%S)}
 APP=isu14-1
+SUB_APPS="isu14-3"
 DB=isu14-2
 APP_ADDR=172.31.36.213
 BENCH_ADDR=172.31.46.60
@@ -12,7 +13,11 @@ BENCH_ADDR=172.31.46.60
 scp -q "$(dirname "$0")/deploy-db.sh" $DB:deploy-db.sh
 ssh -n $DB "bash deploy-db.sh $REF" 2>&1 | tail -1
 scp -q "$(dirname "$0")/deploy.sh" $APP:deploy.sh
-ssh -n $APP "bash deploy.sh $REF" 2>&1 | tail -3
+for h in $SUB_APPS; do
+  scp -q "$(dirname "$0")/deploy.sh" $h:deploy.sh
+  ssh -n $h "bash deploy.sh $REF sub" 2>&1 | tail -1
+done
+ssh -n $APP "bash deploy.sh $REF main" 2>&1 | tail -3
 # 解析用ログをリセット
 ssh -n $APP 'sudo truncate -s 0 /var/log/nginx/access.log; true'
 ssh -n $DB 'sudo test -f /var/log/mysql/mysql-slow.log && sudo truncate -s 0 /var/log/mysql/mysql-slow.log; true'
