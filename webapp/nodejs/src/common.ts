@@ -4,9 +4,6 @@ import type { Ride, RideStatus } from "./types/models.js";
 export const INITIAL_FARE = 500;
 export const FARE_PER_DISTANCE = 100;
 
-// 通知APIのポーリング間隔。短すぎるとリクエストが殺到してAPI全体が遅くなる
-export const NOTIFICATION_RETRY_AFTER_MS = 100;
-
 // マンハッタン距離を求める
 export const calculateDistance = (
   aLatitude: number,

@@ -28,7 +28,6 @@ import {
   getLatestRideStatus,
   INITIAL_FARE,
   latestRideStatusSQL,
-  NOTIFICATION_RETRY_AFTER_MS,
 } from "./common.js";
 import type { CountResult } from "./types/util.js";
 import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
@@ -500,7 +499,7 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
       [user.id],
     );
     if (!ride) {
-      return ctx.json({ retry_after_ms: NOTIFICATION_RETRY_AFTER_MS }, 200);
+      return ctx.json({ retry_after_ms: 30 }, 200);
     }
     const [[yetSentRideStatus]] = await ctx.var.dbConn.query<
       Array<RideStatus & RowDataPacket>
@@ -538,7 +537,7 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
         created_at: ride.created_at.getTime(),
         updated_at: ride.updated_at.getTime(),
       },
-      retry_after_ms: NOTIFICATION_RETRY_AFTER_MS,
+      retry_after_ms: 30,
     };
     if (ride.chair_id !== null) {
       const [[chair]] = await ctx.var.dbConn.query<
