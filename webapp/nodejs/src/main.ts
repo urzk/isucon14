@@ -43,7 +43,7 @@ const pool = createPool({
   password: process.env.ISUCON_DB_PASSWORD || "isucon",
   database: process.env.ISUCON_DB_NAME || "isuride",
   timezone: "+00:00",
-  connectionLimit: 50,
+  connectionLimit: 20,
 });
 
 const app = new Hono<Environment>();
