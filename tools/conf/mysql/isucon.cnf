@@ -10,3 +10,4 @@ long_query_time = 0
 # アプリサーバー (別ホスト) から接続できるようにする
 bind-address = 0.0.0.0
 mysqlx-bind-address = 127.0.0.1
+performance_schema = OFF

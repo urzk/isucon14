@@ -4,10 +4,19 @@ import type { Chair, User } from "./types/models.js";
 // 作成後に変化しない行のプロセス内キャッシュ
 const userById = new Map<string, User>();
 const chairById = new Map<string, Chair>();
+const discountByRideId = new Map<string, number>();
 
 export const clearRowCache = (): void => {
   userById.clear();
   chairById.clear();
+  discountByRideId.clear();
+};
+
+export const getRideDiscount = (rideId: string): number | undefined =>
+  discountByRideId.get(rideId);
+
+export const setRideDiscount = (rideId: string, discount: number): void => {
+  discountByRideId.set(rideId, discount);
 };
 
 export const getUserById = async (

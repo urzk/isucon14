@@ -30,7 +30,7 @@ import {
 import type { CountResult } from "./types/util.js";
 import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
 import { atoi } from "./utils/integer.js";
-import { getChairById } from "./cache.js";
+import { getChairById, getRideDiscount, setRideDiscount } from "./cache.js";
 
 type AppPostUserRequest = Readonly<{
   username: string;
@@ -625,6 +625,7 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
   await ctx.var.dbConn.beginTransaction();
   try {
     // 稼働中で、完了していないライドを持たず、位置情報がある椅子
+    // (完了直後の椅子はクライアント側でまだライド中と見なされうるため、完了から1秒間は含めない)
     const [chairs] = await ctx.var.dbConn.query<
       Array<
         { id: string; name: string; model: string } & Pick<
@@ -640,7 +641,8 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
        WHERE chairs.is_active = TRUE
          AND NOT EXISTS (
            SELECT 1 FROM rides
-           WHERE rides.chair_id = chairs.id AND rides.latest_status <> 'COMPLETED'
+           WHERE rides.chair_id = chairs.id
+             AND (rides.latest_status <> 'COMPLETED' OR rides.updated_at > NOW(6) - INTERVAL 1 SECOND)
          )
        ORDER BY chairs.id`,
     );
@@ -711,12 +713,19 @@ async function calculateDiscountedFare(
     pickupLongitude = ride.pickup_longitude;
 
     // すでにクーポンが紐づいているならそれの割引額を参照
-    const [[coupon]] = await dbConn.query<Array<Coupon & RowDataPacket>>(
-      "SELECT * FROM coupons WHERE used_by = ?",
-      ride.id,
-    );
-    if (coupon) {
-      discount = coupon.discount;
+    // (クーポンはライド作成時に紐づけられた後は変わらないのでキャッシュする)
+    const cached = getRideDiscount(ride.id);
+    if (cached !== undefined) {
+      discount = cached;
+    } else {
+      const [[coupon]] = await dbConn.query<Array<Coupon & RowDataPacket>>(
+        "SELECT * FROM coupons WHERE used_by = ?",
+        ride.id,
+      );
+      if (coupon) {
+        discount = coupon.discount;
+      }
+      setRideDiscount(ride.id, discount);
     }
   } else {
     // 初回利用クーポンを最優先で使う
