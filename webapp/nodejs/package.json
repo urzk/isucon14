@@ -2,7 +2,7 @@
   "name": "nodejs",
   "type": "module",
   "scripts": {
-    "start": "tsc && node dist/cluster.js",
+    "start": "tsc && node dist/main.js",
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
