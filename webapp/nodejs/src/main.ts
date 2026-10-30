@@ -111,7 +111,7 @@ app.post(
 app.get("/api/internal/matching", internalGetMatching);
 
 const port = 8080;
-serve(
+const server = serve(
   {
     fetch: app.fetch,
     port,
@@ -120,6 +120,9 @@ serve(
     console.log(`Server is running on http://localhost:${addr.port}`);
   },
 );
+// nginx が keepalive で使い回す接続を先に閉じて 502 にならないよう、nginx 側より長くする
+server.keepAliveTimeout = 120_000;
+server.headersTimeout = 121_000;
 
 async function postInitialize(ctx: Context<Environment>) {
   const body = await ctx.req.json<{ payment_server: string }>();
