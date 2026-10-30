@@ -54,6 +54,12 @@ export type Ride = {
   updated_at: Date;
 };
 
+// 通知APIで使う、最古の未通知ステータスを結合したライド
+export type RideWithYetSentStatus = Ride & {
+  yet_sent_status_id: string | null;
+  yet_sent_status: string | null;
+};
+
 export type RideStatus = {
   id: string;
   ride_id: string;

@@ -9,7 +9,7 @@ import type {
   Coordinate,
   Owner,
   Ride,
-  RideStatus,
+  RideWithYetSentStatus,
 } from "./types/models.js";
 import { secureRandomStr } from "./utils/random.js";
 
@@ -116,20 +116,24 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
   const chair = ctx.var.chair;
 
   try {
-    const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      "SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1",
+    // 最新のライドと、その椅子への未通知ステータスのうち最も古いものを1クエリで取得する
+    const [[ride]] = await ctx.var.dbConn.query<
+      Array<RideWithYetSentStatus & RowDataPacket>
+    >(
+      `SELECT r.*, s.id AS yet_sent_status_id, s.status AS yet_sent_status
+       FROM (SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1) r
+       LEFT JOIN ride_statuses s ON s.id = (
+         SELECT id FROM ride_statuses WHERE ride_id = r.id AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1
+       )`,
       [chair.id],
     );
     if (!ride) {
       return ctx.json({ retry_after_ms: NOTIFICATION_RETRY_AFTER_MS }, 200);
     }
 
-    const [[yetSentRideStatus]] = await ctx.var.dbConn.query<
-      Array<RideStatus & RowDataPacket>
-    >(
-      "SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1",
-      [ride.id],
-    );
+    const yetSentRideStatus = ride.yet_sent_status_id
+      ? { id: ride.yet_sent_status_id, status: ride.yet_sent_status as string }
+      : undefined;
     const status = yetSentRideStatus
       ? yetSentRideStatus.status
       : ride.latest_status;
