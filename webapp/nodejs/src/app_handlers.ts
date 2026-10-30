@@ -30,7 +30,7 @@ import {
 import type { CountResult } from "./types/util.js";
 import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
 import { atoi } from "./utils/integer.js";
-import { getChairById } from "./cache.js";
+import { getChairById, getRideDiscount, setRideDiscount } from "./cache.js";
 
 type AppPostUserRequest = Readonly<{
   username: string;
@@ -711,12 +711,19 @@ async function calculateDiscountedFare(
     pickupLongitude = ride.pickup_longitude;
 
     // すでにクーポンが紐づいているならそれの割引額を参照
-    const [[coupon]] = await dbConn.query<Array<Coupon & RowDataPacket>>(
-      "SELECT * FROM coupons WHERE used_by = ?",
-      ride.id,
-    );
-    if (coupon) {
-      discount = coupon.discount;
+    // (クーポンはライド作成時に紐づけられた後は変わらないのでキャッシュする)
+    const cached = getRideDiscount(ride.id);
+    if (cached !== undefined) {
+      discount = cached;
+    } else {
+      const [[coupon]] = await dbConn.query<Array<Coupon & RowDataPacket>>(
+        "SELECT * FROM coupons WHERE used_by = ?",
+        ride.id,
+      );
+      if (coupon) {
+        discount = coupon.discount;
+      }
+      setRideDiscount(ride.id, discount);
     }
   } else {
     // 初回利用クーポンを最優先で使う
