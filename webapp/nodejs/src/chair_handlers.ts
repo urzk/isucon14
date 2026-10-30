@@ -2,7 +2,10 @@ import type { Context } from "hono";
 import { setCookie } from "hono/cookie";
 import type { RowDataPacket } from "mysql2";
 import { ulid } from "ulid";
-import { getLatestRideStatus } from "./common.js";
+import {
+  getLatestRideStatus,
+  NOTIFICATION_RETRY_AFTER_MS,
+} from "./common.js";
 import type { Environment } from "./types/hono.js";
 import type {
   Coordinate,
@@ -128,7 +131,7 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
       [chair.id],
     );
     if (!ride) {
-      return ctx.json({ retry_after_ms: 30 }, 200);
+      return ctx.json({ retry_after_ms: NOTIFICATION_RETRY_AFTER_MS }, 200);
     }
 
     const [[yetSentRideStatus]] = await ctx.var.dbConn.query<
@@ -172,7 +175,7 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
           },
           status,
         },
-        retry_after_ms: 30,
+        retry_after_ms: NOTIFICATION_RETRY_AFTER_MS,
       },
       200,
     );
