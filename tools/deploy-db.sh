@@ -12,4 +12,6 @@ for f in tools/conf/mysql/*.cnf; do
     sudo systemctl restart mysql
   fi
 done
+# DB専用サーバーなので、アプリとマッチャーは止める (共有DBに対してマッチングが並行して走るのを防ぐ)
+sudo systemctl disable --now isuride-node.service isuride-matcher.service isuride-go.service 2>/dev/null || true
 systemctl is-active mysql
