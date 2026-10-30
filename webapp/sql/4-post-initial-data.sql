@@ -26,10 +26,3 @@ ALTER TABLE rides
 UPDATE rides
 SET latest_status = COALESCE((SELECT status FROM ride_statuses WHERE ride_id = rides.id ORDER BY created_at DESC LIMIT 1), 'MATCHING'),
     updated_at    = updated_at;
-
--- 初期データの完了済みライドから chair_stats を構築する
-INSERT INTO chair_stats (chair_id, total_rides_count, total_evaluation)
-SELECT chair_id, COUNT(*), IFNULL(SUM(evaluation), 0)
-FROM rides
-WHERE chair_id IS NOT NULL AND latest_status = 'COMPLETED'
-GROUP BY chair_id;

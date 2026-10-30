@@ -412,11 +412,6 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
       [ulid(), rideId, "COMPLETED"],
     );
-    await ctx.var.dbConn.query(
-      `INSERT INTO chair_stats (chair_id, total_rides_count, total_evaluation) VALUES (?, 1, ?)
-       ON DUPLICATE KEY UPDATE total_rides_count = total_rides_count + 1, total_evaluation = total_evaluation + VALUES(total_evaluation)`,
-      [ride.chair_id, reqJson.evaluation],
-    );
 
     [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE id = ?",
@@ -581,15 +576,15 @@ async function getChairStats(
   dbConn: Connection,
   chairId: string,
 ): Promise<AppGetNotificationResponseChairStats> {
-  // 完了したライドの件数と評価の合計は評価時に chair_stats へ積算している
+  // COMPLETED は ARRIVED / CARRYING を経た後にしか記録されないので、完了済みのライドだけを集計すればよい
   const [[stats]] = await dbConn.query<
-    Array<{ total_rides_count: number; total_evaluation: number } & RowDataPacket>
+    Array<{ cnt: number; total: string | null } & RowDataPacket>
   >(
-    "SELECT total_rides_count, total_evaluation FROM chair_stats WHERE chair_id = ?",
+    "SELECT COUNT(*) AS cnt, SUM(evaluation) AS total FROM rides WHERE chair_id = ? AND latest_status = 'COMPLETED'",
     [chairId],
   );
-  const totalRidesCount = Number(stats?.total_rides_count ?? 0);
-  const totalEvaluation = Number(stats?.total_evaluation ?? 0);
+  const totalRidesCount = Number(stats.cnt);
+  const totalEvaluation = Number(stats.total ?? 0);
   return {
     total_rides_count: totalRidesCount,
     total_evaluation_avg:
