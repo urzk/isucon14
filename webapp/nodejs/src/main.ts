@@ -31,6 +31,7 @@ import {
 } from "./owner_handlers.js";
 import type { Environment } from "./types/hono.js";
 import { execSync } from "node:child_process";
+import type { Server } from "node:http";
 import { internalGetMatching } from "./internal_handlers.js";
 import { createPool, type PoolConnection } from "mysql2/promise";
 
@@ -121,8 +122,9 @@ const server = serve(
   },
 );
 // nginx が keepalive で使い回す接続を先に閉じて 502 にならないよう、nginx 側より長くする
-server.keepAliveTimeout = 120_000;
-server.headersTimeout = 121_000;
+const httpServer = server as Server;
+httpServer.keepAliveTimeout = 120_000;
+httpServer.headersTimeout = 121_000;
 
 async function postInitialize(ctx: Context<Environment>) {
   const body = await ctx.req.json<{ payment_server: string }>();
